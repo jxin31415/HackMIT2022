@@ -33,10 +33,10 @@ from getJson import getData
 
 userLatitude = 0.0
 userLongitude = 0.0
-requestYear = 2020
+requestYear = 2022
 requestMonth = 5
 requestDay = 1
-predIntervalLength = 7
+predIntervalLength = 7000
 # df = pd.DataFrame()
 
 # Convert series to supervised learning
@@ -101,19 +101,6 @@ def makePredictions():
     # last_date = pd.to_datetime(
     #     dataset['datetime'].dt.date.iloc[-1], errors='coerce')
 
-
-    
-    
-    # Replace all NaNs with value from previous row, the exception being Gage_height;
-    # Only consider rows with valid Gage_height values
-    dataset = dataset[dataset['Gage_height'].notna()]
-
-    for col in dataset:
-        dataset[col].fillna(method='interpolate', inplace=True)
-
-    # Remove any NaNs or infinite values
-    dataset = dataset[~dataset.isin([np.nan, np.inf, -np.inf]).any(1)]
-
     
     # Validation data
     last_date = date(requestYear, requestMonth, requestDay)
@@ -121,12 +108,14 @@ def makePredictions():
     d1 = last_date
     d2 = last_date + timedelta(predIntervalLength)
     df_validation = df_validation.drop(
-        df_validation[df_validation['datetime'].dt.date < d1].index)
+        df_validation[df_validation['DateTime'].dt.date < d1].index)
 
     df_validation = df_validation.drop(
-        df_validation[df_validation['datetime'].dt.date > d2].index)
+        df_validation[df_validation['DateTime'].dt.date > d2].index)
 
-
+    values = dataset.copy().drop('DateTime', 1).values
+    print("Relevant Columns:")
+    print(dataset.columns)
 
     # Specify columns to plot
     groups = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -135,7 +124,7 @@ def makePredictions():
     pyplot.figure()
     for group in groups:
         pyplot.subplot(len(groups), 1, i)
-        pyplot.plot(dataset.values[:, group])
+        pyplot.plot(values[:, group])
         pyplot.title(dataset.columns[group], y=0.5, loc='right')
         i += 1
     pyplot.show()
@@ -151,7 +140,7 @@ def makePredictions():
 
     # Repeat for validation data
     df_validation_relevant = df_validation.copy()
-    df_validation_relevant = df_validation_relevant.drop('datetime', 1)
+    df_validation_relevant = df_validation_relevant.drop('DateTime', 1)
     # df_validation_relevant = df_validation_relevant.drop('fld_stg', 1)
     validation_vals = df_validation_relevant.values
     validation_vals = validation_vals.astype('float32')
@@ -177,3 +166,6 @@ def makePredictions():
         0.75 * levels_valid_scaled), (0.5 * levels_valid_scaled), (0.25 * levels_valid_scaled)]
     stg_colors = ['r', 'tab:orange', 'y', 'g']
     stg_labels = ['Flood Stage', '75%', '50%', '25%']
+
+
+makePredictions()
