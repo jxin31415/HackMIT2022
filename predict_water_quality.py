@@ -1,5 +1,4 @@
 # https://machinelearningmastery.com/multivariate-time-series-forecasting-lstms-keras/
-
 import numpy as np
 import pandas as pd
 # Requires all tensorflow dependencies
@@ -30,11 +29,15 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 import rdb2csv
+from getJson import getData
 
 userLatitude = 0.0
 userLongitude = 0.0
-requestYear, requestMonth, requestDay = 0
-df = pd.DataFrame()
+requestYear = 2020
+requestMonth = 5
+requestDay = 1
+predIntervalLength = 7
+# df = pd.DataFrame()
 
 # Convert series to supervised learning
 def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
@@ -70,52 +73,20 @@ def loadDataFrame():
     # TODO: parameters --> url --> load resulting data from USGS url to tsv --> pandas df
     print()
 
-def processDataFrame():
-# def makePredictions():
+def makePredictions():
     # Load dataset
-    dataset = pd.read_json("trainingData.json")
+    dataset = pd.read_csv("trainingData.json")
+    # datetime
+    dataset['DateTime'] = pd.to_datetime(dataset['DateTime'], errors='coerce')
 
-    
-    # Process data:
-    # TODO: replace column names
-
-    # Inputs
-    inputs = ['site_no', 'datetime', 'latitude', 'longitude']
-    # Site_no to numeric
-    dataset['site_no'] = pd.to_numeric(dataset['site_no'])
-    # Datetime to datetime
-    dataset['datetime'] = pd.to_datetime(dataset['datetime'], errors='coerce')
-    # Latitude to numeric
-    dataset['latitude'] = pd.to_numeric(dataset['latitude'])
-    # Longitude to numeric
-    dataset['longitude'] = pd.to_numeric(dataset['longitude'])
-    # ... other inputs (climate? weather? season? idk)
-
-
-    # Outputs (water quality metrics)
-    outputs = ['Water_temp', 'Conductance', 'Dissolved_oxygen', 'Turbidity', 'pH']
-    # Water_temp
-    dataset.rename(columns={'Temperature_water_C': 'Water_temp'}, inplace=True)
-    dataset['Water_temp'] = pd.to_numeric(dataset['Water_temp'])
-    
-    # Conductance
-    dataset.rename(
-        columns={'Specific_conductance_water_uScm': 'Conductance'}, inplace=True)
+    # numeric
+    dataset['Latitude'] = pd.to_numeric(dataset['Latitude'])
+    dataset['Longitude'] = pd.to_numeric(dataset['Longitude'])
+    dataset['Temperature'] = pd.to_numeric(dataset['Temperature'])
     dataset['Conductance'] = pd.to_numeric(dataset['Conductance'])
-
-    # Dissolved_oxygen
-    dataset.rename(
-        columns={'Dissolved_oxygen_water_mgL': 'Dissolved_oxygen'}, inplace=True)
     dataset['Dissolved_oxygen'] = pd.to_numeric(dataset['Dissolved_oxygen'])
-
-    # Turbidity
-    dataset.rename(columns={'Turbidity_water_FNU': 'Turbidity'}, inplace=True)
+    dataset['PH'] = pd.to_numeric(dataset['PH'])
     dataset['Turbidity'] = pd.to_numeric(dataset['Turbidity'])
-
-    # pH
-    dataset.rename(columsn={'pH_water_unfiltered': 'pH'}, inplace=True)
-    dataset['pH'] = pd.to_numeric(dataset['pH'])
-
 
     # idk what's going on here?????
     # Add columns for water quality metrics +7 days into future (repeat for +14, +21, +28)
@@ -131,27 +102,31 @@ def processDataFrame():
     #     dataset['datetime'].dt.date.iloc[-1], errors='coerce')
 
 
-
-    # Skip TRIM section
-
     
-    # Filter data
-    # ...
+    
+    # Replace all NaNs with value from previous row, the exception being Gage_height;
+    # Only consider rows with valid Gage_height values
+    dataset = dataset[dataset['Gage_height'].notna()]
 
-    # Unnecessary columns
-    dataset = dataset.drop('site_no',1, errors='ignore')
+    for col in dataset:
+        dataset[col].fillna(method='interpolate', inplace=True)
 
-    # Invalid data
-    dataset.drop(dataset[dataset['pH'] < 0 or dataset['pH'] > 14].index, inplace=True)
-    dataset.drop(dataset[dataset['Dissolved_oxygen'] < 0].index, inplace=True)
-
-    dataset = dataset.dropna()
-    dataset.reset_index(drop=True)
+    # Remove any NaNs or infinite values
     dataset = dataset[~dataset.isin([np.nan, np.inf, -np.inf]).any(1)]
 
+    
+    # Validation data
+    last_date = date(requestYear, requestMonth, requestDay)
+    df_validation = dataset.copy()
+    d1 = last_date
+    d2 = last_date + timedelta(predIntervalLength)
+    df_validation = df_validation.drop(
+        df_validation[df_validation['datetime'].dt.date < d1].index)
 
-    # # Move inputs before outputs
-    # dataset = [c for c in dataset if c in inputs] + [c for c in dataset if c in outputs]
+    df_validation = df_validation.drop(
+        df_validation[df_validation['datetime'].dt.date > d2].index)
+
+
 
     # Specify columns to plot
     groups = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -165,21 +140,40 @@ def processDataFrame():
         i += 1
     pyplot.show()
 
-
-    # TODO: Handle NaN/empty values 
-    
+    values = values.astype('float32')
 
     # normalize features
-    values = dataset.values
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled = scaler.fit_transform(values)
+
     # frame as supervised learning
     reframed = series_to_supervised(scaled, 1, 1)
-    # drop columns we don't want to predict
-    # reframed.drop(reframed.columns[[9,10,11,12,13,14,15]], axis=1, inplace=True)
-    print(reframed.head())
+
+    # Repeat for validation data
+    df_validation_relevant = df_validation.copy()
+    df_validation_relevant = df_validation_relevant.drop('datetime', 1)
+    # df_validation_relevant = df_validation_relevant.drop('fld_stg', 1)
+    validation_vals = df_validation_relevant.values
+    validation_vals = validation_vals.astype('float32')
+    validation_scaled = scaler.fit_transform(validation_vals)
+    validation_reframed = series_to_supervised(validation_scaled, 1, 1)
     
-    # Validation data
-    
+    print("VALIDATION MIN AND MAX")
+    min_conduct_valid = df_validation['Conductance'].min()
+    print(min_conduct_valid)
+    mean_conduct_valid = df_validation['Conductance'].mean()
+    print(mean_conduct_valid)
+    max_conduct_valid = df_validation['Conductance'].max()
+    print(max_conduct_valid)
 
     
+    df_levels_valid = pd.DataFrame(
+        {'Conductance': [min_conduct_valid, mean_conduct_valid, max_conduct_valid]})
+
+    levels_valid_scaled = scaler.fit_transform(df_levels_valid.values)
+    levels_valid_scaled = levels_valid_scaled[1][0]
+
+    levels_valid_scaled = [levels_valid_scaled, (
+        0.75 * levels_valid_scaled), (0.5 * levels_valid_scaled), (0.25 * levels_valid_scaled)]
+    stg_colors = ['r', 'tab:orange', 'y', 'g']
+    stg_labels = ['Flood Stage', '75%', '50%', '25%']
