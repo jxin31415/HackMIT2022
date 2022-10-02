@@ -36,9 +36,7 @@ userLongitude = 0.0
 requestYear = 2022
 requestMonth = 5
 requestDay = 1
-predIntervalLength = 7000
-# df = pd.DataFrame()
-
+predIntervalLength = 7
 
 fig_test = Figure()
 fig_valid = Figure()
@@ -85,15 +83,19 @@ def init(latitude, longitude, year, month, day):
     requestYear = year
     requestMonth = month
     requestDay = day
-
+    loadDataFrame()
 
 def loadDataFrame():
+    global userLatitude
+    global userLongitude
+    global requestYear
+    global requestMonth
+    global requestDay
+
     # TODO: parameters --> url --> load resulting data from USGS url to tsv --> pandas df
     # TODO: make JSON file for frontend
     # TODO: if multiple sites in bounding box, take average of their column values for each datetime
-    print()
 
-def makePredictions():
     # Load dataset
     dataset = pd.read_csv("trainingData.json")
     # datetime
@@ -121,12 +123,22 @@ def makePredictions():
     # last_date = pd.to_datetime(
     #     dataset['datetime'].dt.date.iloc[-1], errors='coerce')
 
+    # Replace all NaNs with value from previous row, the exception being Gage_height;
+    # Only consider rows with valid Gage_height values
+    dataset = dataset[dataset['Conductance'].notna()]
+
+    for col in dataset:
+        dataset[col].fillna(method='interpolate', inplace=True)
+
+    # Remove any NaNs or infinite values
+    dataset = dataset[~dataset.isin([np.nan, np.inf, -np.inf]).any(1)]
+
     
     # Validation data
     last_date = date(requestYear, requestMonth, requestDay)
     df_validation = dataset.copy()
     d1 = last_date
-    d2 = last_date + timedelta(predIntervalLength)
+    d2 = last_date + timedelta(days=predIntervalLength)
     df_validation = df_validation.drop(
         df_validation[df_validation['DateTime'].dt.date < d1].index)
 
@@ -166,11 +178,11 @@ def makePredictions():
     validation_scaled = scaler.fit_transform(validation_vals)
     validation_reframed = series_to_supervised(validation_scaled, 1, 1)
 
-    predict(dataset, reframed, validation_reframed, df_validation)
+    makePredictions(dataset, reframed, validation_reframed, df_validation)
 
 
 
-def predict(dataset, reframed, validation_reframed, df_validation):
+def makePredictions(dataset, reframed, validation_reframed, df_validation):
     scaler = MinMaxScaler(feature_range=(0, 1))
 
     min_conduct = dataset['Conductance'].min()
@@ -183,14 +195,14 @@ def predict(dataset, reframed, validation_reframed, df_validation):
     conductance_scaled = scaler.fit_transform(df_conductance_levels.values)
     conductance_scaled = conductance_scaled[1][0]
 
-    conductance_scaled = [conductance_scaled, (
-        0.75 * conductance_scaled), (0.5 * conductance_scaled), (0.25 * conductance_scaled)]
+    conductance_levels_scaled = [(1.5 * conductance_scaled), (conductance_scaled), (
+        0.5 * conductance_scaled), (0.25 * conductance_scaled)]
     conductance_colors = ['r', 'tab:orange', 'y', 'g']
-    conductance_labels = ['Conductance Levels', '75%', '50%', '25%']
+    conductance_labels = ['150% Mean', 'Mean Conductance', '50% Mean', '25% Mean']
 
     df_validation.append(pd.Series(), ignore_index=True)
     # Set last row to mean?
-    # df_validation.iloc[-1, df_validation.columns.get_loc('Conductance')] = mean_conduct_valid
+    df_validation.iloc[-1, df_validation.columns.get_loc('Conductance')] = mean_conduct_valid
 
     print("VALIDATION MIN AND MAX")
     min_conduct_valid = df_validation['Conductance'].min()
@@ -238,8 +250,8 @@ def predict(dataset, reframed, validation_reframed, df_validation):
 
     pyplot.plot(test_y, label='test_y')
     pyplot.plot(yhat_test, label='yhat_test')
-    for condLevelIndex in range(len(conductance_scaled)):
-        pyplot.axhline(y=conductance_scaled[condLevelIndex], color=conductance_colors[condLevelIndex],
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        pyplot.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex],
                        linestyle='-', label=conductance_labels[condLevelIndex])
     pyplot.legend()
     pyplot.show()
@@ -248,16 +260,16 @@ def predict(dataset, reframed, validation_reframed, df_validation):
     axis_test = fig_test.add_subplot(1, 1, 1)
     axis_test.plot(test_y, label='Actual', linewidth=2)
     axis_test.plot(yhat_test, label='Predicted', linewidth=2.5, alpha=0.6, color='tab:pink')
-    for condLevelIndex in range(len(conductance_scaled)):
-        axis_test.axhline(y=conductance_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex])
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        axis_test.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex])
     leg_test = axis_test.legend()
 
     yhat_valid = model.predict(X_validation)
 
     pyplot.plot(y_validation, label='y_validation')
     pyplot.plot(yhat_valid, label='yhat_valid')
-    for condLevelIndex in range(len(conductance_scaled)):
-        pyplot.axhline(y=conductance_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex])
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        pyplot.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex])
     pyplot.legend()
     pyplot.show()
 
@@ -265,8 +277,8 @@ def predict(dataset, reframed, validation_reframed, df_validation):
     axis_valid.plot(y_validation, label='Actual', linewidth=2)
     axis_valid.plot(yhat_valid, label='Predicted',
                     linewidth=3, alpha=0.7, color='tab:pink')
-    for condLevelIndex in range(len(conductance_scaled)):
-        axis_valid.axhline(y=conductance_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex], linewidth=1)
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        axis_valid.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex], linewidth=1)
     leg_valid = axis_valid.legend()
 
     df_validation = df_validation[~df_validation.isin(
@@ -292,8 +304,8 @@ def predict(dataset, reframed, validation_reframed, df_validation):
 
             dates.append(
                 df_validation.iloc[i, df_validation.columns.get_loc('DateTime')])
-            resultsYhat.append(max_yhat_valid / conductance_scaled[0])
-            resultsYvalid.append(max_y_validation / conductance_scaled[0])
+            resultsYhat.append(max_yhat_valid / conductance_levels_scaled[0])
+            resultsYvalid.append(max_y_validation / conductance_levels_scaled[0])
 
             i += 4
         results.append(dates)
@@ -328,4 +340,4 @@ def predict(dataset, reframed, validation_reframed, df_validation):
     print('Test RMSE: %.3f' % rmse)
 
 
-makePredictions()
+init(0.0, 0.0, 2022, 5, 1)
