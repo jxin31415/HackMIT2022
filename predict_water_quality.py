@@ -39,6 +39,15 @@ requestDay = 1
 predIntervalLength = 7000
 # df = pd.DataFrame()
 
+
+fig_test = Figure()
+fig_valid = Figure()
+
+figs = []  # fig_test, fig_valid
+results = []  # datetime, yhat_valid, y_validation
+toReturn = []
+
+
 # Convert series to supervised learning
 def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
     n_vars = 1 if type(data) is list else data.shape[1]
@@ -165,7 +174,142 @@ def makePredictions():
     levels_valid_scaled = [levels_valid_scaled, (
         0.75 * levels_valid_scaled), (0.5 * levels_valid_scaled), (0.25 * levels_valid_scaled)]
     stg_colors = ['r', 'tab:orange', 'y', 'g']
-    stg_labels = ['Flood Stage', '75%', '50%', '25%']
+    stg_labels = ['Conductance Levels', '75%', '50%', '25%']
+
+    values = reframed.values
+    n_train_hours = math.floor(len(dataset.index) * 0.8)
+    train = values[:n_train_hours, :]
+    test = values[n_train_hours:, :]
+
+    # Split into input and outputs
+    train_X, train_y = train[:, :-1], train[:, -1]
+    test_X, test_y = test[:, :-1], test[:, -1]
+
+    # Reshape input to be 3D [samples, timesteps, features]
+    train_X = train_X.reshape((train_X.shape[0], 1, train_X.shape[1]))
+    test_X = test_X.reshape((test_X.shape[0], 1, test_X.shape[1]))
+
+    # Repeat for validation data
+    valid_vals = validation_reframed.values
+    X_validation, y_validation = valid_vals[:, :-1], valid_vals[:, -1]
+    X_validation = X_validation.reshape(
+        (X_validation.shape[0], 1, X_validation.shape[1]))
+
+    # Design network
+    model = Sequential()
+    model.add(LSTM(50, input_shape=(train_X.shape[1], train_X.shape[2])))
+    model.add(Dense(1, activation=keras.activations.sigmoid))
+    model.compile(loss='mae', optimizer='rmsprop', metrics=['mse', 'mae'])
+    # Fit network
+    history = model.fit(train_X, train_y, epochs=55, batch_size=100, validation_data=(
+        test_X, test_y), verbose=2,  shuffle=False)  # validation_split= 0.2)
+
+    # Plot history
+    pyplot.plot(history.history['loss'], label='train')
+    pyplot.plot(history.history['val_loss'], label='validation')
+    pyplot.legend()
+    pyplot.show()
+
+    # Make a prediction and plot results
+    yhat_test = model.predict(test_X)
+
+    pyplot.plot(test_y, label='test_y')
+    pyplot.plot(yhat_test, label='yhat_test')
+    for stgIndex in range(len(levels_valid_scaled)):
+        pyplot.axhline(y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex],
+                       linestyle='-', label=stg_labels[stgIndex])
+    pyplot.legend()
+    pyplot.show()
+
+    # Plot and evaluate prediction results
+    axis_test = fig_test.add_subplot(1, 1, 1)
+    axis_test.plot(test_y, label='Actual', linewidth=2)
+    axis_test.plot(yhat_test, label='Predicted',
+                   linewidth=2.5, alpha=0.6, color='tab:pink')
+    for stgIndex in range(len(levels_valid_scaled)):
+        axis_test.axhline(
+            y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex], linestyle='-', label=stg_labels[stgIndex])
+    leg_test = axis_test.legend()
+
+    yhat_valid = model.predict(X_validation)
+
+    pyplot.plot(y_validation, label='y_validation')
+    pyplot.plot(yhat_valid, label='yhat_valid')
+    for stgIndex in range(len(levels_valid_scaled)):
+        pyplot.axhline(y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex],
+                       linestyle='-', label=stg_labels[stgIndex])
+    pyplot.legend()
+    pyplot.show()
+
+    axis_valid = fig_valid.add_subplot(1, 1, 1)
+    axis_valid.plot(y_validation, label='Actual', linewidth=2)
+    axis_valid.plot(yhat_valid, label='Predicted',
+                    linewidth=3, alpha=0.7, color='tab:pink')
+    for stgIndex in range(len(levels_valid_scaled)):
+        axis_valid.axhline(y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex],
+                           linestyle='-', label=stg_labels[stgIndex], linewidth=1)
+    leg_valid = axis_valid.legend()
+
+    df_validation = df_validation[~df_validation.isin(
+        [np.nan, np.inf, -np.inf]).any(1)]
+
+    global figs
+    global results
+    global toReturn
+
+    figs.append(fig_test)
+    figs.append(fig_valid)
+
+    try:
+        i = 0
+        dates = []
+        resultsYhat = []
+        resultsYvalid = []
+
+        while (i < len(yhat_valid)-4):
+            resultsRow = []
+            max_yhat_valid = max(max(
+                yhat_valid[i][0], yhat_valid[i+1][0]), max(yhat_valid[i+2][0], yhat_valid[i+3][0]))
+            max_y_validation = max(max(
+                y_validation[i], y_validation[i+1]), max(y_validation[i+2], y_validation[i+3]))
+
+            dates.append(
+                df_validation.iloc[i, df_validation.columns.get_loc('DateTime')])
+            resultsYhat.append(max_yhat_valid / levels_valid_scaled[0])
+            resultsYvalid.append(max_y_validation / levels_valid_scaled[0])
+
+            i += 4
+        results.append(dates)
+        results.append(resultsYhat)
+        results.append(resultsYvalid)
+
+        toReturn.append(figs)
+        toReturn.append(results)
+
+    except:
+        print("ERROR OCCURRED IN PROCESSING OF VALIDATION RESULTS")
+
+    X_validation = X_validation.reshape(
+        (X_validation.shape[0], X_validation.shape[2]))
+
+    # Invert scaling for forecast
+    inv_yhat = concatenate((yhat_valid, X_validation[:, 1:]), axis=1)
+
+    scaler = MinMaxScaler(feature_range=(0, 1)).fit(inv_yhat)
+
+    inv_yhat = scaler.inverse_transform(inv_yhat)
+    inv_yhat = inv_yhat[:, 0]
+
+    # Invert scaling for actual
+    y_validation = y_validation.reshape((len(y_validation), 1))
+    inv_y = concatenate((y_validation, X_validation[:, 1:]), axis=1)
+
+    inv_y = scaler.inverse_transform(inv_y)
+    inv_y = inv_y[:, 0]
+
+    # Calculate RMSE
+    rmse = sqrt(mean_squared_error(inv_y, inv_yhat))
+    print('Test RMSE: %.3f' % rmse)
 
 
 makePredictions()
