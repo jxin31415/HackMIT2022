@@ -12,7 +12,7 @@ targetVariables = {
 }
 
 def getData():
-     with urllib.request.urlopen("https://waterservices.usgs.gov/nwis/dv/?format=json&indent=on&stateCd=mn&period=P400W&siteStatus=all") as url:
+     with urllib.request.urlopen("https://waterservices.usgs.gov/nwis/dv/?format=json&indent=on&stateCd=nc&period=P400W&siteStatus=all") as url:
           data = json.load(url)
           data = data['value']['timeSeries']
 

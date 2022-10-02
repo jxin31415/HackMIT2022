@@ -168,7 +168,7 @@ def makePredictions(dataset, reframed, validation_reframed, df_validation):
     scaler = MinMaxScaler(feature_range=(0, 1))
 
     min_conduct = dataset['Conductance'].min()
-    mean_conduct = dataset[dataset['Conductance'] > 0]['Conductance'].mean()
+    mean_conduct = dataset['Conductance'].mean()
     max_conduct = dataset['Conductance'].max()
 
     df_conductance_levels = pd.DataFrame(
@@ -187,7 +187,7 @@ def makePredictions(dataset, reframed, validation_reframed, df_validation):
     print("VALIDATION MIN AND MAX")
     min_conduct_valid = df_validation['Conductance'].min()
     print(min_conduct_valid)
-    mean_conduct_valid = df_validation[df_validation['Conductance'] > 0]['Conductance'].mean()
+    mean_conduct_valid = df_validation['Conductance'].mean()
     print(mean_conduct_valid)
     max_conduct_valid = df_validation['Conductance'].max()
     print(max_conduct_valid)
@@ -202,6 +202,10 @@ def makePredictions(dataset, reframed, validation_reframed, df_validation):
     n_train_hours = math.floor(len(dataset.index) * 0.7)
     train = values[n_train_hours:, :]
     test = values[:n_train_hours, :]
+    print("TRAIN SIZE")
+    print(len(train))
+    print("TEST SIZE")
+    print(len(test))
 
     # Split into input and outputs
     train_X, train_y = train[:, :-1], train[:, -1]
@@ -228,6 +232,7 @@ def makePredictions(dataset, reframed, validation_reframed, df_validation):
     pyplot.plot(history.history['loss'], label='train_loss')
     pyplot.plot(history.history['val_loss'], label='validation_loss')
     pyplot.legend()
+    # pyplot.savefig("loss.jpg")
     pyplot.show()
 
     # Make a prediction and plot results
@@ -243,7 +248,7 @@ def makePredictions(dataset, reframed, validation_reframed, df_validation):
     #     pyplot.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex],
     #                    linestyle='-', label=conductance_labels[condLevelIndex])
     # pyplot.legend()
-    # pyplot.savefig("test.png")
+    # # pyplot.savefig("test.png")
     # pyplot.show()
 
     # Plot and evaluate prediction results
