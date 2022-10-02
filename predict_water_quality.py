@@ -166,21 +166,19 @@ def makePredictions():
     validation_scaled = scaler.fit_transform(validation_vals)
     validation_reframed = series_to_supervised(validation_scaled, 1, 1)
 
-    predict(dataset, reframed, validation_reframed)
+    predict(dataset, reframed, validation_reframed, df_validation)
 
 
 
-def predict(dataset, reframed, validation_reframed):
-    print("VALIDATION MIN AND MAX")
-    min_conduct_valid = df_validation['Conductance'].min()
-    print(min_conduct_valid)
-    mean_conduct_valid = df_validation['Conductance'].mean()
-    print(mean_conduct_valid)
-    max_conduct_valid = df_validation['Conductance'].max()
-    print(max_conduct_valid)
+def predict(dataset, reframed, validation_reframed, df_validation):
+    scaler = MinMaxScaler(feature_range=(0, 1))
+
+    min_conduct = dataset['Conductance'].min()
+    mean_conduct = dataset['Conductance'].mean()
+    max_conduct = dataset['Conductance'].max()
 
     df_conductance_levels = pd.DataFrame(
-        {'Conductance': [min_conduct_valid, mean_conduct_valid, max_conduct_valid]})
+        {'Conductance': [min_conduct, mean_conduct, max_conduct]})
 
     conductance_scaled = scaler.fit_transform(df_conductance_levels.values)
     conductance_scaled = conductance_scaled[1][0]
@@ -193,6 +191,14 @@ def predict(dataset, reframed, validation_reframed):
     df_validation.append(pd.Series(), ignore_index=True)
     # Set last row to mean?
     # df_validation.iloc[-1, df_validation.columns.get_loc('Conductance')] = mean_conduct_valid
+
+    print("VALIDATION MIN AND MAX")
+    min_conduct_valid = df_validation['Conductance'].min()
+    print(min_conduct_valid)
+    mean_conduct_valid = df_validation['Conductance'].mean()
+    print(mean_conduct_valid)
+    max_conduct_valid = df_validation['Conductance'].max()
+    print(max_conduct_valid)
 
     # Split into train and test sets
     values = reframed.values
