@@ -28,25 +28,22 @@ from keras.layers import LSTM
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-import rdb2csv
 from getJson import getData
 
 userLatitude = 0.0
 userLongitude = 0.0
-requestYear = 2022
+requestYear = 2020
 requestMonth = 5
 requestDay = 1
-predIntervalLength = 7000
-# df = pd.DataFrame()
-
+predIntervalLength = 7
 
 fig_test = Figure()
 fig_valid = Figure()
 
-figs = []  # fig_test, fig_valid
-results = []  # datetime, yhat_valid, y_validation
-toReturn = []
+figs = [] #fig_test, fig_valid
+results = [] # datetime, yhat_valid, y_validation
 
+toReturn = []
 
 # Convert series to supervised learning
 def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
@@ -74,12 +71,21 @@ def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
     return agg
 
 def init(latitude, longitude, year, month, day):
+    global userLatitude
+    global userLongitude
+    global requestYear
+    global requestMonth
+    global requestDay
     userLatitude = latitude
     userLongitude = longitude
-
+    requestYear = year
+    requestMonth = month
+    requestDay = day
 
 def loadDataFrame():
     # TODO: parameters --> url --> load resulting data from USGS url to tsv --> pandas df
+    # TODO: make JSON file for frontend
+    # TODO: if multiple sites in bounding box, take average of their column values for each datetime
     print()
 
 def makePredictions():
@@ -110,6 +116,19 @@ def makePredictions():
     # last_date = pd.to_datetime(
     #     dataset['datetime'].dt.date.iloc[-1], errors='coerce')
 
+
+    
+    
+    # Replace all NaNs with value from previous row, the exception being Gage_height;
+    # Only consider rows with valid Gage_height values
+    dataset = dataset[dataset['Conductance'].notna()]
+
+    for col in dataset:
+        dataset[col].fillna(method='interpolate', inplace=True)
+
+    # Remove any NaNs or infinite values
+    dataset = dataset[~dataset.isin([np.nan, np.inf, -np.inf]).any(1)]
+
     
     # Validation data
     last_date = date(requestYear, requestMonth, requestDay)
@@ -117,14 +136,12 @@ def makePredictions():
     d1 = last_date
     d2 = last_date + timedelta(predIntervalLength)
     df_validation = df_validation.drop(
-        df_validation[df_validation['DateTime'].dt.date < d1].index)
+        df_validation[df_validation['datetime'].dt.date < d1].index)
 
     df_validation = df_validation.drop(
-        df_validation[df_validation['DateTime'].dt.date > d2].index)
+        df_validation[df_validation['datetime'].dt.date > d2].index)
 
-    values = dataset.copy().drop('DateTime', 1).values
-    print("Relevant Columns:")
-    print(dataset.columns)
+
 
     # Specify columns to plot
     groups = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -133,7 +150,7 @@ def makePredictions():
     pyplot.figure()
     for group in groups:
         pyplot.subplot(len(groups), 1, i)
-        pyplot.plot(values[:, group])
+        pyplot.plot(dataset.values[:, group])
         pyplot.title(dataset.columns[group], y=0.5, loc='right')
         i += 1
     pyplot.show()
@@ -149,13 +166,39 @@ def makePredictions():
 
     # Repeat for validation data
     df_validation_relevant = df_validation.copy()
-    df_validation_relevant = df_validation_relevant.drop('DateTime', 1)
-    # df_validation_relevant = df_validation_relevant.drop('fld_stg', 1)
+    df_validation_relevant = df_validation_relevant.drop('datetime', 1)
+    
     validation_vals = df_validation_relevant.values
     validation_vals = validation_vals.astype('float32')
     validation_scaled = scaler.fit_transform(validation_vals)
     validation_reframed = series_to_supervised(validation_scaled, 1, 1)
+
+    predict(dataset, reframed, validation_reframed)
     
+    
+def predict(dataset, reframed, validation_reframed):
+    
+    # Find and scale flood stages -------------
+    min_conduct = dataset['Conductance'].min()
+    mean_conduct = dataset['Conductance'].mean()
+    max_conduct = dataset['Conductance'].max()
+
+    df_conductance_levels = pd.DataFrame(
+        {'Conductance': [min_conduct, mean_conduct, max_conduct]})
+
+    conductance_scaled = scaler.fit_transform(df_conductance_levels.values)
+    conductance_scaled = conductance_scaled[1][0]
+
+    conductance_levels_scaled = [conductance_scaled, (
+        0.75 * conductance_scaled), (0.5 * conductance_scaled), (0.25 * conductance_scaled)]
+    conductance_colors = ['r', 'tab:orange', 'y', 'g']
+    conductance_labels = ['Flood Stage', '75%', '50%', '25%']
+
+
+
+    df_validation.append(pd.Series(), ignore_index=True)
+    # Set last row to mean?
+    # df_validation.iloc[-1, df_validation.columns.get_loc('Conductance')] = mean_conduct_valid
     print("VALIDATION MIN AND MAX")
     min_conduct_valid = df_validation['Conductance'].min()
     print(min_conduct_valid)
@@ -165,17 +208,7 @@ def makePredictions():
     print(max_conduct_valid)
 
     
-    df_levels_valid = pd.DataFrame(
-        {'Conductance': [min_conduct_valid, mean_conduct_valid, max_conduct_valid]})
-
-    levels_valid_scaled = scaler.fit_transform(df_levels_valid.values)
-    levels_valid_scaled = levels_valid_scaled[1][0]
-
-    levels_valid_scaled = [levels_valid_scaled, (
-        0.75 * levels_valid_scaled), (0.5 * levels_valid_scaled), (0.25 * levels_valid_scaled)]
-    stg_colors = ['r', 'tab:orange', 'y', 'g']
-    stg_labels = ['Conductance Levels', '75%', '50%', '25%']
-
+    # Split into train and test sets
     values = reframed.values
     n_train_hours = math.floor(len(dataset.index) * 0.8)
     train = values[:n_train_hours, :]
@@ -192,17 +225,15 @@ def makePredictions():
     # Repeat for validation data
     valid_vals = validation_reframed.values
     X_validation, y_validation = valid_vals[:, :-1], valid_vals[:, -1]
-    X_validation = X_validation.reshape(
-        (X_validation.shape[0], 1, X_validation.shape[1]))
+    X_validation = X_validation.reshape((X_validation.shape[0], 1, X_validation.shape[1]))
 
     # Design network
     model = Sequential()
     model.add(LSTM(50, input_shape=(train_X.shape[1], train_X.shape[2])))
-    model.add(Dense(1, activation=keras.activations.sigmoid))
-    model.compile(loss='mae', optimizer='rmsprop', metrics=['mse', 'mae'])
+    model.add(Dense(1,activation = keras.activations.sigmoid))
+    model.compile(loss='mae', optimizer='rmsprop', metrics = ['mse','mae'])
     # Fit network
-    history = model.fit(train_X, train_y, epochs=55, batch_size=100, validation_data=(
-        test_X, test_y), verbose=2,  shuffle=False)  # validation_split= 0.2)
+    history = model.fit(train_X, train_y, epochs=55, batch_size=100, validation_data=(test_X, test_y), verbose=2,  shuffle=False) #validation_split= 0.2)
 
     # Plot history
     pyplot.plot(history.history['loss'], label='train')
@@ -215,50 +246,47 @@ def makePredictions():
 
     pyplot.plot(test_y, label='test_y')
     pyplot.plot(yhat_test, label='yhat_test')
-    for stgIndex in range(len(levels_valid_scaled)):
-        pyplot.axhline(y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex],
-                       linestyle='-', label=stg_labels[stgIndex])
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        pyplot.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex])
     pyplot.legend()
     pyplot.show()
+
 
     # Plot and evaluate prediction results
     axis_test = fig_test.add_subplot(1, 1, 1)
     axis_test.plot(test_y, label='Actual', linewidth=2)
-    axis_test.plot(yhat_test, label='Predicted',
-                   linewidth=2.5, alpha=0.6, color='tab:pink')
-    for stgIndex in range(len(levels_valid_scaled)):
-        axis_test.axhline(
-            y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex], linestyle='-', label=stg_labels[stgIndex])
+    axis_test.plot(yhat_test, label='Predicted', linewidth=2.5, alpha=0.6, color='tab:pink')
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        axis_test.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex])
     leg_test = axis_test.legend()
+    
 
     yhat_valid = model.predict(X_validation)
 
     pyplot.plot(y_validation, label='y_validation')
     pyplot.plot(yhat_valid, label='yhat_valid')
-    for stgIndex in range(len(levels_valid_scaled)):
-        pyplot.axhline(y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex],
-                       linestyle='-', label=stg_labels[stgIndex])
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        pyplot.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex])
     pyplot.legend()
     pyplot.show()
 
     axis_valid = fig_valid.add_subplot(1, 1, 1)
     axis_valid.plot(y_validation, label='Actual', linewidth=2)
-    axis_valid.plot(yhat_valid, label='Predicted',
-                    linewidth=3, alpha=0.7, color='tab:pink')
-    for stgIndex in range(len(levels_valid_scaled)):
-        axis_valid.axhline(y=levels_valid_scaled[stgIndex], color=stg_colors[stgIndex],
-                           linestyle='-', label=stg_labels[stgIndex], linewidth=1)
+    axis_valid.plot(yhat_valid, label='Predicted', linewidth=3, alpha=0.7, color='tab:pink')
+    for condLevelIndex in range(len(conductance_levels_scaled)):
+        axis_valid.axhline(y=conductance_levels_scaled[condLevelIndex], color=conductance_colors[condLevelIndex], linestyle='-', label=conductance_labels[condLevelIndex], linewidth=1)
     leg_valid = axis_valid.legend()
 
-    df_validation = df_validation[~df_validation.isin(
-        [np.nan, np.inf, -np.inf]).any(1)]
 
-    global figs
+    df_validation = df_validation[~df_validation.isin([np.nan, np.inf, -np.inf]).any(1)] 
+
+    global figs 
     global results
     global toReturn
 
     figs.append(fig_test)
     figs.append(fig_valid)
+
 
     try:
         i = 0
@@ -268,15 +296,12 @@ def makePredictions():
 
         while (i < len(yhat_valid)-4):
             resultsRow = []
-            max_yhat_valid = max(max(
-                yhat_valid[i][0], yhat_valid[i+1][0]), max(yhat_valid[i+2][0], yhat_valid[i+3][0]))
-            max_y_validation = max(max(
-                y_validation[i], y_validation[i+1]), max(y_validation[i+2], y_validation[i+3]))
-
-            dates.append(
-                df_validation.iloc[i, df_validation.columns.get_loc('DateTime')])
-            resultsYhat.append(max_yhat_valid / levels_valid_scaled[0])
-            resultsYvalid.append(max_y_validation / levels_valid_scaled[0])
+            max_yhat_valid = max( max(yhat_valid[i][0],yhat_valid[i+1][0]), max(yhat_valid[i+2][0],yhat_valid[i+3][0]) )
+            max_y_validation = max( max(y_validation[i],y_validation[i+1]), max(y_validation[i+2],y_validation[i+3]) )
+            
+            dates.append(df_validation.iloc[i, df_validation.columns.get_loc('datetime')])
+            resultsYhat.append(max_yhat_valid / conductance_levels_scaled[0])
+            resultsYvalid.append(max_y_validation / conductance_levels_scaled[0])
 
             i += 4
         results.append(dates)
@@ -288,28 +313,26 @@ def makePredictions():
 
     except:
         print("ERROR OCCURRED IN PROCESSING OF VALIDATION RESULTS")
+    
 
-    X_validation = X_validation.reshape(
-        (X_validation.shape[0], X_validation.shape[2]))
-
+    X_validation = X_validation.reshape((X_validation.shape[0], X_validation.shape[2]))
+    
     # Invert scaling for forecast
     inv_yhat = concatenate((yhat_valid, X_validation[:, 1:]), axis=1)
 
     scaler = MinMaxScaler(feature_range=(0, 1)).fit(inv_yhat)
 
     inv_yhat = scaler.inverse_transform(inv_yhat)
-    inv_yhat = inv_yhat[:, 0]
+    inv_yhat = inv_yhat[:,0]
 
     # Invert scaling for actual
     y_validation = y_validation.reshape((len(y_validation), 1))
     inv_y = concatenate((y_validation, X_validation[:, 1:]), axis=1)
 
     inv_y = scaler.inverse_transform(inv_y)
-    inv_y = inv_y[:, 0]
+    inv_y = inv_y[:,0]
 
     # Calculate RMSE
     rmse = sqrt(mean_squared_error(inv_y, inv_yhat))
     print('Test RMSE: %.3f' % rmse)
 
-
-makePredictions()
